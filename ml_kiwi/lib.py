@@ -2,29 +2,25 @@
 """Compute interpolating polynomial for kiwi.com machine learning weekend."""
 
 import logging
-import sys
 
 import anymarkup
 import progressbar
-import json
-import click
 import daiquiri
 import requests
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import pylab
 
+from .errors import InputError
+
 
 daiquiri.setup(level=logging.INFO)
 _logger = daiquiri.getLogger(__name__)
 
 
-class InputError(Exception):
-    """Raised on invalid user input."""
-
-
 class Defaults(object):
     """Default values if not explicitly provided."""
+
     X_FROM = -100.0
     X_TO = 100.0
     X_STEP = 0.05
@@ -100,31 +96,6 @@ class DataSource(object):
         return x_values, y_values
 
 
-def json_dump(dictionary, output_file=None, pretty=True):
-    """Dump dictionary to JSON file, do it pretty by default.
-
-    :param dictionary: dictionary to serialize
-    :type dictionary: dict|list
-    :param output_file: path to output file (defaults to sys.stdout)
-    :type output_file: str
-    :param pretty: do pretty formatting
-    :type pretty: bool
-    """
-    pretty_json_kwargs = {}
-    if pretty:
-        pretty_json_kwargs = {
-            'sort_keys': True,
-            'separators': (',', ': '),
-            'indent': 2
-        }
-
-    if output_file:
-        with open(output_file, 'w') as f:
-            json.dump(dictionary, f, **pretty_json_kwargs)
-    else:
-        json.dump(dictionary, sys.stdout, **pretty_json_kwargs)
-
-
 def do_interpolate(x_values, y_values, min_degree, max_degree):
     """Perform interpolating on x and y values.
 
@@ -151,7 +122,7 @@ def do_interpolate(x_values, y_values, min_degree, max_degree):
     for degree in range(min_degree, max_degree):
         _logger.info("Computing interpolating polynomial for degree %d", degree)
         fit = np.polyfit(x_values, y_values, degree, full=True)
-        _logger.info("Result for polyfit: %s", fit)
+        _logger.debug("Result for polyfit: %s", fit)
         results.append({
             'coefficients': tuple(fit[0]),
             'squared_error': fit[1][0] if fit[1] else 0.0
@@ -163,7 +134,7 @@ def do_interpolate(x_values, y_values, min_degree, max_degree):
             best = results[-1]
         elif best and best['squared_error'] == 0.0 \
                 and results[-1]['squared_error'] == 0.0 and not overfit_reported:
-            _logger.info('Multiple results with squared error equal to 0.0 found, overfitting data set?')
+            _logger.warning('Multiple results with squared error equal to 0.0 found, overfitting data set?')
             overfit_reported = True
 
     return best, results
@@ -200,60 +171,3 @@ def do_plot(x, y, coefficients, show_plot=True, output_image=None):
 
     if output_image:
         fig.savefig(output_image)
-
-
-@click.command()
-@click.option('-i', '--input', type=click.Path(exists=True, file_okay=True, dir_okay=False),
-              help="Input file to be used - if omitted, remote API is called to retrieve values.")
-@click.option('-o', '--output', type=click.Path(dir_okay=False, writable=True),
-              help="Output file to be used - if omitted, defaults to stdout).")
-@click.option('--output-image', type=click.Path(dir_okay=False, writable=True), default=None,
-              help="Output file where interpolation image should be stored.")
-@click.option('--max-degree', type=click.INT, default=Defaults.MAX_DEGREE,
-              help="Maximal degree of fitting polynomial (default: %d)." % Defaults.MAX_DEGREE)
-@click.option('--min-degree', type=click.INT, default=Defaults.MIN_DEGREE,
-              help="Minimal degree of fitting polynomial (default: %d)" % Defaults.MIN_DEGREE)
-@click.option('--x-from', type=click.FLOAT, default=Defaults.X_FROM,
-              help="Value on x axis to start with data gathering "
-                   "from API (default: %f)." % Defaults.X_FROM)
-@click.option('--x-to', type=click.FLOAT, default=Defaults.X_TO,
-              help="Value on x axis that shouldn't be reached when gathering data "
-                   "from API (default: %f)." % Defaults.X_TO)
-@click.option('--x-step', type=click.FLOAT, default=Defaults.X_STEP,
-              help="Step on x axis to start "
-                   "with (default: %f)." % Defaults.X_STEP)
-@click.option('-v', '--verbose', is_flag=True,
-              help="Turn on debug messages.")
-@click.option('--no-pretty', is_flag=True,
-              help="Turn off pretty formatted output.")
-@click.option('--no-show-plot', is_flag=True,
-              help="Do not show plot results.")
-def main(input=None, output=None, max_degree=None, min_degree=None,
-         x_from=None, x_to=None, x_step=None, no_pretty=True, verbose=False,
-         no_show_plot=False, output_image=None):
-    """Compute degree of polynomial for kiwi.com's weekend machine learning session."""
-    if verbose:
-        _logger.setLevel(logging.DEBUG)
-        _logger.debug("Verbose mode turned on, passed arguments: %s.", locals())
-
-    x_values, y_values = DataSource().get_data_file(input) if input \
-        else DataSource().get_data_api(x_from, x_to, x_step)
-
-    _logger.debug("Computing interpolating polynomial (min degree: %d, max_degree: %d)", min_degree, max_degree)
-    best, results = do_interpolate(x_values, y_values, min_degree, max_degree)
-
-    if not results:
-        _logger.error("No results available, giving up...")
-        return 1
-
-    _logger.debug("Dumping results to '%s'" % output if output else sys.stdout.name)
-    json_dump({'best_result': best, 'all_results': results}, output, pretty=not no_pretty)
-
-    if not no_show_plot or output_image:
-        _logger.debug("Plotting results...")
-        do_plot(x_values, y_values, best['coefficients'],
-                output_image=output_image, show_plot=not no_show_plot)
-
-
-if __name__ == '__main__':
-    sys.exit(main())
